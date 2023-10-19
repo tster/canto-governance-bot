@@ -58,17 +58,17 @@ with open('secrets.json', 'r') as f:
     
     # print(f"\nOS ENV: {os.environ}")
     if TWITTER:
+        print("Pushing to Twitter")
         twitSecrets = secrets['TWITTER']
         APIKEY = os.getenv(f"{PREFIX}_TWITTER_APIKEY", twitSecrets['APIKEY'])
         APIKEYSECRET = os.getenv(f"{PREFIX}_TWITTER_APIKEYSECRET", twitSecrets['APIKEYSECRET'])
         ACCESS_TOKEN = os.getenv(f"{PREFIX}_TWITTER_ACCESS_TOKENT", twitSecrets['ACCESS_TOKEN'])
         ACCESS_TOKEN_SECRET = os.getenv(f"{PREFIX}_TWITTER_ACCESS_TOKEN_SECRET", twitSecrets['ACCESS_TOKEN_SECRET'])
-        # Authenticate to Twitter & Get API
-        auth = tweepy.OAuth1UserHandler(APIKEY, APIKEYSECRET)
-        auth.set_access_token(ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
-        api = tweepy.API(auth, wait_on_rate_limit=True)      
+        # Authenticate to Twitter
+        api = tweepy.Client(consumer_key=APIKEY, consumer_secret=APIKEYSECRET, access_token=ACCESS_TOKEN, access_token_secret=ACCESS_TOKEN_SECRET, wait_on_rate_limit=True)
 
     if DISCORD:
+        print("Pushing to Discord")
         discSecrets = secrets['DISCORD']
         # print(discSecrets)
         WEBHOOK_URL = os.getenv(f"{PREFIX}_DISCORD_WEBHOOK_URL", discSecrets['WEBHOOK_URL'])        
@@ -166,8 +166,8 @@ def discord_post_to_channel(ticker, propID, title, description, voteLink):
         title=f"${str(ticker).upper()} #{propID} | {title}", 
         description=description,
         color=HEX_COLOR,
-        values={"vote": [voteLink, False]},
-        imageLink=AVATAR_URL,                      
+        values={"vote": ["https://canto.io/governance", False]},
+        imageLink=AVATAR_URL
     )
 
 def discord_add_reacts(message_id): # needs READ_MESSAGE_HISTORY & ADD_REACTIONS
@@ -203,24 +203,14 @@ def post_update(ticker, propID, title, description="", isDAO=False, DAOVoteLink=
     if isDAO == False:
         chainExploreLink = get_explorer_link(ticker, propID)
 
-    message = f"${str(ticker).upper()} | Proposal #{propID} | VOTING | {title} | {chainExploreLink}"
-    twitterAt = ""
-
-    if isDAO == True:
-        twitterAt = DAOs[ticker]["twitter"]
-    else:
-        twitterAt = get_chain(ticker)['twitter'] # @'s blockchains official twitter
-    
-    if len(twitterAt) > 1:
-        twitterAt = f'@{twitterAt}' if not twitterAt.startswith('@') else twitterAt
-        message += f" | {twitterAt}"
+    message = f"${str(ticker).upper()} | Proposal #{propID} | VOTING | {title} | https://canto.io/governance"
     print(message)
 
     if IN_PRODUCTION:
         try:
             if TWITTER:
-                tweet = api.update_status(message)
-                print(f"Tweet sent for {tweet.id}: {message}")
+                tweet = api.create_tweet(user_auth=True,text=message)
+                print(f"Tweet sent")
             if DISCORD:
                 discord_post_to_channel(ticker, propID, title, description, chainExploreLink)
                 if DISCORD_THREADS_AND_REACTIONS:
@@ -237,14 +227,10 @@ def getAllProposals(ticker) -> list:
     props = []
     
     try:
-        # link = chainAPIs[ticker][0]
-        link = get_chain(ticker)['rest_root'] + "/" + REST_ENDPOINTS['proposals']
-        response = requests.get(link, headers={
-            'accept': 'application/json', 
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.51 Safari/537.36'}, 
-            params={'proposal_status': '2'}) # 2 = voting period
-        # print(response.url)
+        link = 'https://rest.cosmos.directory/canto/cosmos/gov/v1beta1/proposals?proposal_status=2'
+        response = requests.get(link, headers={'accept': 'application/json'})
         props = response.json()['proposals']
+        print(props)
     except Exception as e:
         print(f"Issue with request to {ticker}: {e}")
     return props
@@ -258,14 +244,14 @@ def checkIfNewerDAOProposalIsOut(daoTicker):
     for prop in props:
         current_prop_id = int(prop['id'])
         current_id_str = str(current_prop_id)
-        # print(f"{daoTicker} | {current_prop_id}")
+        print(f"{daoTicker} | {current_prop_id}")
 
         proposal_title = prop['proposal']['title']
         proposer = prop['proposal']['proposer']
 
         status = prop['proposal']['status']
         if status != "open": # executed, or maybe no deposit yet.
-            # print(f"Proposal {current_prop_id} is not open for voting yet, skipping")
+            print(f"Proposal {current_prop_id} is not open for voting yet, skipping")
             continue
 
         if daoTicker not in list(proposals.keys()):
@@ -279,7 +265,7 @@ def checkIfNewerDAOProposalIsOut(daoTicker):
         print(f"{daoTicker} has not been posted before as: {current_prop_id} | {proposal_title}")
 
         if IS_FIRST_RUN == False: # we only write DAO proposals to discord / twitter when its not the first run or it would spam ALL proposals on start
-            # print(f"Proposal {current_prop_id} exists")
+            print(f"Proposal {current_prop_id} exists")
             # Announce it as live
             # title = f"{token['name']} Proposal #{current_prop_id}"
             post_update(
@@ -301,18 +287,22 @@ def checkIfNewerDAOProposalIsOut(daoTicker):
 def checkIfNewestProposalIDIsGreaterThanLastTweet(ticker):
     # get our last tweeted proposal ID (that was in voting period), if it exists
     # if not, 0 is the value so we search through all proposals
+    print("looking for newest prop id")
     lastPropID = 0
     if ticker in proposals:
         lastPropID = int(proposals[ticker])
 
     # gets JSON list of all proposals
     props = getAllProposals(ticker)
+
     if len(props) == 0:
+        print("no proposal found")
         return
 
     # loop through out last stored voted prop ID & newest proposal ID
     for prop in props:
         current_prop_id = int(prop['proposal_id'])
+        print(current_prop_id)
 
         # If this is a new proposal which is not the last one we tweeted for
         if current_prop_id > lastPropID:   
@@ -346,6 +336,8 @@ def runChecks():
                 # print(f"Ignoring {chain} as it is in the ignore list.")
                 continue # ignore chains like terra we don't want to announce
 
+            print("checkIfNewest")
+            print(chain)
             checkIfNewestProposalIDIsGreaterThanLastTweet(chain)
         except Exception as e:
             print(f"{chain} checkProp failed: {e}")
@@ -356,6 +348,9 @@ def runChecks():
         try:
             if dao not in TICKERS_TO_ANNOUNCE and TICKERS_TO_ANNOUNCE != []:
                 continue
+
+            print("checkIfNewer")
+            print(chain)
             checkIfNewerDAOProposalIsOut(dao)
         except Exception as e:
             print(f"{dao} checkProp failed {e}")

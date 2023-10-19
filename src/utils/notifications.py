@@ -24,6 +24,8 @@ def discord_notification(url="", title="", description="", color="ffffff", value
     webhook.add_embed(embed)
     response = webhook.execute()
 
+    tagWebhook = DiscordWebhook(url=url, content='@everyone')
+    # tagResponse = tagWebhook.execute()
 
 if __name__ == "__main__":
     discord_notification(

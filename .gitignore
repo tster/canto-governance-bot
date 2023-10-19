@@ -2,3 +2,5 @@
 logs.txt
 __pycache__
 secrets.json
+secrets.example.json
+secrets.json.save
